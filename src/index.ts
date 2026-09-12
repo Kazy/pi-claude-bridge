@@ -1,30 +1,30 @@
-import { calculateCost, createAssistantMessageEventStream, type AssistantMessage, type AssistantMessageEventStream, type Context, type ImageContent, type Model, type SimpleStreamOptions, type TextContent, type Tool, type UserMessage } from "@earendil-works/pi-ai";
-import { getModels } from "@earendil-works/pi-ai/compat";
-import { buildSessionContext, compact, generateBranchSummary, keyHint, type BranchSummaryResult, type CompactionEntry, type ExtensionAPI, type ExtensionContext, type ExtensionUIContext } from "@earendil-works/pi-coding-agent";
-import { query, type EffortLevel, type SDKMessage, type SettingSource } from "@anthropic-ai/claude-agent-sdk";
+import { type EffortLevel, query, type SDKMessage, type SettingSource } from "@anthropic-ai/claude-agent-sdk";
 import type { Base64ImageSource, ContentBlockParam } from "@anthropic-ai/sdk/resources";
+import { type AssistantMessage, type AssistantMessageEventStream, type Context, calculateCost, createAssistantMessageEventStream, type ImageContent, type Model, type SimpleStreamOptions, type TextContent, type Tool, type UserMessage } from "@earendil-works/pi-ai";
+import { getModels } from "@earendil-works/pi-ai/compat";
+import { type BranchSummaryResult, buildSessionContext, type CompactionEntry, compact, type ExtensionAPI, type ExtensionContext, type ExtensionUIContext, generateBranchSummary, keyHint } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { createSession, deleteSession, openSession, repairToolPairing } from "cc-session-io";
 import { appendFileSync, mkdirSync, realpathSync, statSync } from "fs";
 import { homedir } from "os";
 import { dirname, join } from "path";
-import { PROVIDER_ID, messageContentToText, convertPiMessages } from "./convert.js";
-import { applyLongContext, buildModels, claudeCodeModelId, type LongContextSettings, resolveModel as _resolveModel } from "./models.js";
-import { MCP_SERVER_NAME, MCP_TOOL_PREFIX, renderSkillsBlock } from "./skills.js";
-import { verifyWrittenSession as _verifyWrittenSession } from "./session-verify.js";
+import { type AskClaudeMode, askClaudeCallTags, askClaudeToolDescription, buildAskClaudeParams, resolveAskClaudeDefaults, resolveAskClaudeMode } from "./askclaude-schema.js";
+import { buildActionSummary, type ToolCallState } from "./askclaude-ui.js";
+import { type CarriedAttachment, collectCarriedAttachments, placeCarriedAttachments } from "./attachments.js";
+import { type Config, claudeCodeSettings, loadConfig, markStartupNoticeShown } from "./config.js";
+import { convertPiMessages, messageContentToText, PROVIDER_ID } from "./convert.js";
 import { extractAllToolResults as _extractAllToolResults, type McpResult } from "./extract-tool-results.js";
-import { QueryContext, ctx } from "./query-state.js";
-import { makePromptStream, userMessage, type PromptStream } from "./prompt-stream.js";
-import { claudeCodeSettings, loadConfig, markStartupNoticeShown, type Config } from "./config.js";
+import { createToolServer } from "./mcp-server.js";
+import { resolveModel as _resolveModel, applyLongContext, buildModels, claudeCodeModelId, type LongContextSettings } from "./models.js";
 import {
 	collectPromptSkills,
 	projectPromptCapture,
 	sharedPromptCaptures,
 } from "./prompt-capture.js";
-import { collectCarriedAttachments, placeCarriedAttachments, type CarriedAttachment } from "./attachments.js";
-import { createToolServer } from "./mcp-server.js";
-import { buildActionSummary, type ToolCallState } from "./askclaude-ui.js";
-import { askClaudeCallTags, askClaudeToolDescription, buildAskClaudeParams, resolveAskClaudeDefaults, resolveAskClaudeMode, type AskClaudeMode } from "./askclaude-schema.js";
+import { makePromptStream, type PromptStream, userMessage } from "./prompt-stream.js";
+import { ctx, QueryContext } from "./query-state.js";
+import { verifyWrittenSession as _verifyWrittenSession } from "./session-verify.js";
+import { MCP_SERVER_NAME, MCP_TOOL_PREFIX, renderSkillsBlock, selectedToolsCanRead, skillReadToolForMcp } from "./skills.js";
 import { nonSystemMessages, toBridgeContext } from "./transcript.js";
 
 // --- Debug logging ---
@@ -1619,7 +1619,7 @@ function streamClaudeAgentSdk(model: Model<any>, context: Context, options?: Sim
 	const promptCapture = promptCaptures.resolveOrDerive(context.systemPrompt);
 	const systemPromptAppend = promptCapture
 		? projectPromptCapture(promptCapture, {
-			skillReadTool: mcpTools.some((tool) => tool.name === "read") ? "mcp" : "none",
+			skillReadTool: skillReadToolForMcp(mcpTools.map((tool) => tool.name)),
 		})
 		: undefined;
 
@@ -2124,7 +2124,7 @@ export default function (pi: ExtensionAPI) {
 		selectedTools?: string[];
 	} | undefined) {
 		if (!systemPrompt) return;
-		const hasRead = !options?.selectedTools || options.selectedTools.includes("read");
+		const hasRead = selectedToolsCanRead(options?.selectedTools);
 		promptCaptures.record(systemPrompt, {
 			custom: options?.customPrompt,
 			append: options?.appendSystemPrompt,
